@@ -1230,11 +1230,15 @@ const handlers = {
     if (s.update) { ui.version = s.version; ui.update = s.update; }   // the demo's snapshots have none
     if (s.alarms) ui.alarms = s.alarms;
     if (s.bluetooth) ui.bluetooth = s.bluetooth;
+    if (s.photo) photoSet(s.photo);
     renderModels(); renderThread(); renderStatus(); renderAlarms(); renderBluetooth();
     updateFinished((s.update || {}).job);
   },
   power(p) {
     $('powerOff').classList.toggle('on', p.state === 'off');
+  },
+  photo(p) {
+    if (!photo.busy) photoSet(p);   // the page that took it shows it itself
   },
   update(u) {
     ui.update = u;
@@ -1278,6 +1282,91 @@ function connectEvents() {
   const es = new EventSource('/events');
   for (const [name, fn] of Object.entries(handlers)) es.addEventListener(name, e => fn(JSON.parse(e.data)));
 }
+
+/* ---- camera: 拍照 takes a picture; the next thing said or typed asks about it ---- */
+const ASKS = ['这是什么', '帮我解这道题', '检查这道题对不对', '把图上的字读出来', '翻译图上的文字'];
+const photo = { on: false, busy: false, until: 0, timer: null };
+
+function photoRender() {
+  const open = photo.on || photo.busy;
+  $('photo').classList.toggle('on', open);
+  $('photo').classList.toggle('busy', photo.busy);
+  $('btnCamera').classList.toggle('busy', photo.busy);
+  $('btnCamera').classList.toggle('on-photo', photo.on && !photo.busy);
+  $('btnCameraText').textContent = photo.busy ? '拍照中' : '拍照';
+  for (const b of $('photoAsks').children) b.disabled = photo.busy;
+  $('photoSend').disabled = photo.busy;
+  $('photoRetake').disabled = photo.busy;
+  clearInterval(photo.timer);
+  if (photo.on && !photo.busy) {
+    photo.timer = setInterval(photoTick, 1000);
+    photoTick();
+  } else {
+    $('photoLeft').textContent = photo.busy ? '正在拍照…' : '';
+  }
+}
+function photoTick() {
+  const left = Math.max(0, Math.round((photo.until - Date.now()) / 1000));
+  $('photoLeft').textContent = left ? `${left} 秒内有效` : '';
+  $('photoLeft').classList.toggle('soon', left > 0 && left <= 20);
+  if (!left) photoSet({ on: false });
+}
+function photoSet(p) {
+  photo.on = !!p.on;
+  if (p.on) {
+    photo.until = Date.now() + (p.seconds || 120) * 1000;
+    $('photoImg').src = '/api/camera/last.jpg?' + Date.now();
+  } else {
+    document.activeElement && document.activeElement.blur && $('photo').contains(document.activeElement) && document.activeElement.blur();
+  }
+  photoRender();
+}
+
+async function takePhoto() {
+  if (photo.busy) return;
+  photo.busy = true;
+  photoRender();
+  let r = null;
+  try {
+    if (DEMO) { r = { ok: true, seconds: 120 }; await new Promise(res => setTimeout(res, 900)); }
+    else r = await (await fetch('/api/camera/capture', { method: 'POST' })).json();
+  } catch (e) {
+    r = { ok: false, error: '客户端没有响应' };
+  }
+  photo.busy = false;
+  if (r.ok) { $('photoText').value = ''; photoSet({ on: true, seconds: r.seconds }); }
+  else { photoSet({ on: false }); toast(r.error || '拍照失败', 'error'); }
+}
+
+// ask about the picture: by text here, by voice with the mic (the hub sees the picture is waiting)
+function photoAsk(text) {
+  text = (text || '').trim();
+  if (!text || photo.busy || !photo.on) return;
+  post('/api/text', { text });
+  photoSet({ on: false });
+}
+function photoDiscard() {
+  if (!DEMO) fetch('/api/camera/discard', { method: 'POST' }).catch(() => {});
+  photoSet({ on: false });
+}
+
+for (const q of ASKS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'photo-ask';
+  b.textContent = q;
+  b.addEventListener('click', () => photoAsk(q));
+  $('photoAsks').appendChild(b);
+}
+$('btnCamera').addEventListener('click', takePhoto);
+$('photoRetake').addEventListener('click', takePhoto);
+$('photoCancel').addEventListener('click', photoDiscard);
+$('photoText').addEventListener('focus', () => $('photo').classList.add('typing'));
+$('photoText').addEventListener('blur', () => $('photo').classList.remove('typing'));
+$('photoForm').addEventListener('submit', e => { e.preventDefault(); photoAsk($('photoText').value); });
+// the system keyboard is injected by the kiosk shell and comes up with the focused field (see the Wi-Fi password).
+// On pointerdown, not click, for the same reason as there: a cancelled pointerdown sends no click on the touchscreen.
+$('photoSend').addEventListener('pointerdown', e => { e.preventDefault(); photoAsk($('photoText').value); });
 
 /* ---- buttons ---- */
 function post(path, body) {

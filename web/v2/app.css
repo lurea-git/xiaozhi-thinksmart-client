@@ -154,7 +154,8 @@ body.mic-off[data-state="idle"] .mouth { width: 12px; height: 4px; margin-left: 
 .title em { font-style: normal; background: linear-gradient(90deg, #8ff0ff, #a9b8ff 70%); -webkit-background-clip: text; color: transparent; }
 .hint { position: relative; margin: 10px 0 0; font-size: 19px; color: var(--ink2); text-align: center; min-height: 28px; }
 
-.controls { position: relative; margin-top: 30px; display: flex; align-items: center; gap: 34px; }
+.controls { position: relative; margin-top: 30px; display: flex; align-items: center; gap: 18px; }
+.controls .ctl { width: 80px; }
 .mic { position: relative; width: 116px; height: 116px; border-radius: 50%; display: grid; place-items: center; color: #081024;
        background: linear-gradient(140deg, #8ff0ff, #6c8cff); box-shadow: 0 12px 34px #4fb8ff40, 0 0 0 9px #ffffff0c;
        transition: transform .14s; }
@@ -451,3 +452,53 @@ body[data-state="listening"] .mic-ring { opacity: .75; }
 .w-msg.bad { color: var(--bad); } .w-msg.ok { color: var(--ok); }
 .w-spin { width: 22px; height: 22px; border-radius: 50%; border: 3px solid #ffffff22; border-top-color: var(--accent2); animation: wspin .8s linear infinite; }
 .w-actions { display: flex; gap: 16px; }
+
+/* ---- camera: the 拍照 button and the panel that asks about the photo ---- */
+@keyframes camSpin { to { transform: rotate(360deg); } }
+@keyframes camIn { from { opacity: 0; transform: translateY(24px) scale(.97); } to { opacity: 1; transform: none; } }
+.ctl.busy { color: var(--accent2); }
+.ctl.busy svg { animation: camSpin 1.1s linear infinite; }
+.ctl.busy span { opacity: .8; }
+.ctl.on-photo { color: var(--accent2); border-color: #5ee0ff55; background: #5ee0ff14; }
+
+.photo { position: fixed; z-index: 28; right: 36px; bottom: 30px; width: 688px; transform: none;
+         opacity: 0; pointer-events: none; transition: opacity .25s; }
+.photo.on { opacity: 1; pointer-events: auto; animation: camIn .32s ease-out; }
+.photo-card { display: grid; grid-template-columns: 168px 1fr; grid-template-rows: auto 1fr; gap: 14px 22px; align-items: start; padding: 20px 22px;
+              border-radius: 28px; background: #0c1433;
+              border: 1px solid #ffffff1f; box-shadow: 0 30px 80px #000c, inset 0 1px 0 #ffffff12; }
+.photo-pic { position: relative; width: 168px; height: 126px; border-radius: 18px; overflow: hidden; background: #050813; border: 1px solid var(--line); }
+.photo-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-pic img:not([src]) { visibility: hidden; }
+.photo-ring { position: absolute; inset: 0; border-radius: 18px; border: 2px solid transparent; pointer-events: none; }
+.photo.busy .photo-pic img { opacity: .45; }
+.photo.busy .photo-ring { border-color: var(--accent2); border-top-color: transparent; animation: camSpin .9s linear infinite; }
+.photo-body { grid-column: 2; grid-row: 1 / span 2; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.photo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.photo-head b { font-size: 24px; font-weight: 700; letter-spacing: .5px; }
+.photo-left { font-size: 16px; color: var(--ink3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.photo-left.soon { color: var(--warn); }
+.photo-tip { margin: 0; font-size: 17px; color: var(--ink2); }
+.photo-asks { display: flex; flex-wrap: wrap; gap: 10px; }
+.photo-ask { height: 44px; padding: 0 16px; border-radius: 15px; font-size: 18px; color: var(--ink);
+             background: var(--card); border: 1px solid var(--line); transition: transform .12s, background .2s; }
+.photo-ask:active { transform: scale(.96); background: var(--card2); }
+.photo-ask[disabled] { opacity: .4; pointer-events: none; }
+.photo-type { display: flex; gap: 10px; align-items: center; }
+.photo-type input { flex: 1; min-width: 0; height: 56px; padding: 0 20px; border-radius: 18px; font-size: 20px; color: var(--ink);
+                    background: #ffffff0d; border: 1px solid var(--line); outline: none; }
+.photo-type input:focus { border-color: #5ee0ff88; background: #ffffff14; }
+.photo-type input::placeholder { color: var(--ink3); }
+.photo-send { width: 56px; height: 56px; flex: none; border-radius: 18px; display: grid; place-items: center; color: #081024;
+              background: linear-gradient(135deg, var(--accent2), var(--accent)); }
+.photo-send:active { transform: scale(.94); }
+.photo-send[disabled] { opacity: .35; }
+.photo-side { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; gap: 10px; }
+.photo-btn { height: 46px; width: 100%; padding: 0 12px; border-radius: 15px; font-size: 18px; color: var(--ink);
+             background: var(--card2); border: 1px solid var(--line); }
+.photo-btn:active { transform: scale(.96); }
+.photo-btn.quiet { background: transparent; color: var(--ink2); }
+.photo-btn[disabled] { opacity: .4; pointer-events: none; }
+
+/* the on-screen keyboard comes up from the bottom while the text box has focus: move the panel out of its way */
+.photo.typing { bottom: auto; top: 96px; }
