@@ -42,7 +42,7 @@ from pathlib import Path
 import aiohttp
 import numpy as np
 
-from . import alarms, bt, config, mcp, sleep, update, wake_verify
+from . import alarms, bt, camera, config, mcp, sleep, update, wake_verify
 from .audio import OUT_RATE, Audio, load_wav
 from .device import DIM_LEVEL, Keys, Screen, normalize_screen_off
 from .hub import Hub
@@ -208,6 +208,7 @@ class Client:
         self.verifier = wake_verify.make(cfg['wake_verify'], cfg['wake_words'], cfg['hub_http'])
         self.backlog = None           # mic blocks since a wake word hit, uploaded once listening starts
         self.audio = Audio(self._on_block)
+        self.camera = camera.Camera()
         self.hub = Hub(cfg['hub_ws'], cfg['device_id'], cfg['client_id'], cfg['token'],
                        self._on_json, self._on_audio, self._on_closed)
         sounds = ROOT / 'web' / 'sounds'
@@ -357,7 +358,49 @@ class Client:
 
     def snapshot(self):
         return {'status': self.status(), 'models': self.models, 'alarms': self.alarm_view(), 'bluetooth': self.bt.view(),
-                'thread': {'entry': self.view_entry(), 'messages': self.threads.get(self.view_entry(), [])}}
+                'thread': {'entry': self.view_entry(), 'messages': self.threads.get(self.view_entry(), [])},
+                'photo': self._photo_view()}
+
+    def _photo_view(self):
+        if self.photo_jpeg() is None:
+            return {'on': False}
+        left = self.PHOTO_SECONDS - (time.monotonic() - self.photo['at'])
+        return {'on': True, 'model': self.photo['model'], 'seconds': max(0, int(left))}
+
+    # ---- photo (the camera button): the next thing said or typed asks about this picture ----
+
+    PHOTO_SECONDS = 120   # same as the hub's: after that the hub has dropped the picture
+    photo = None          # the photo waiting for a question: {'jpeg', 'at', 'model'}
+
+    async def take_photo(self):
+        """Capture and hand the photo to the hub. Returns {'ok', 'error'?, 'model'?}; the page shows the picture."""
+        try:
+            jpeg = await self.camera.capture()
+            answer = await asyncio.get_running_loop().run_in_executor(
+                None, camera.send_to_hub, self.cfg['hub_http'], self.cfg['device_id'], jpeg)
+        except camera.CameraError as e:
+            log.warning('photo failed: %s', e)
+            return {'ok': False, 'error': str(e)}
+        except Exception:
+            log.exception('photo failed')
+            return {'ok': False, 'error': '拍照失败，请稍后再试'}
+        self.photo = {'jpeg': jpeg, 'at': time.monotonic(), 'model': answer.get('model', '')}
+        self.events.publish('photo', {'on': True, 'model': self.photo['model'], 'seconds': self.PHOTO_SECONDS})
+        return {'ok': True, 'model': self.photo['model'], 'seconds': self.PHOTO_SECONDS}
+
+    def photo_jpeg(self):
+        """The waiting photo for the page's thumbnail; None once it has been used or has expired."""
+        p = self.photo
+        if p and time.monotonic() - p['at'] > self.PHOTO_SECONDS:
+            self.photo = None
+            return None
+        return p['jpeg'] if p else None
+
+    async def discard_photo(self):
+        self.photo = None
+        await asyncio.get_running_loop().run_in_executor(None, camera.discard_on_hub, self.cfg['hub_http'],
+                                                          self.cfg['device_id'])
+        self.events.publish('photo', {'on': False})
 
     def view_entry(self):
         cur = self.models.get('current')
@@ -514,6 +557,10 @@ class Client:
             await self.abort()
         if not await self.ensure_connected():
             return
+        if self.photo is not None:
+            # a typed question about the photo: the hub answers it with the picture (photo_box.take)
+            self.photo = None
+            self.events.publish('photo', {'on': False})
         try:
             # a question sent right after connecting reaches the model before our tool list does,
             # and then "关掉睡眠模式" can't call anything; speech takes longer than this anyway
@@ -581,6 +628,10 @@ class Client:
                 # not speech: the hub's note that the model calls a tool (for the screens of ESP32 boards)
                 log.info('the model calls %s', text[2:])
             elif text:
+                if self.photo is not None:
+                    # the hub took the photo for this question (photo_box.take): it is used up now
+                    self.photo = None
+                    self.events.publish('photo', {'on': False})
                 if self.speech_end > self.listen_since:
                     log.info('recognised %.1f s after the user stopped talking: %s',
                              time.monotonic() - self.speech_end, text)

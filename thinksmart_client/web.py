@@ -179,6 +179,24 @@ def make_app(client: Client):
     app.router.add_post('/api/ptt/stop', action(client.ptt_stop))
     app.router.add_post('/api/model', model)
     app.router.add_post('/api/text', text)
+
+    async def camera_capture(_request):
+        # the answer comes back at once: the page shows the picture (or the reason it failed) right away
+        return web.json_response(await client.take_photo())
+
+    async def camera_last(_request):
+        jpeg = client.photo_jpeg()
+        if jpeg is None:
+            return web.Response(status=404)
+        return web.Response(body=jpeg, content_type='image/jpeg', headers={'Cache-Control': 'no-store'})
+
+    async def camera_discard(_request):
+        await client.discard_photo()
+        return web.json_response({'ok': True})
+
+    app.router.add_post('/api/camera/capture', camera_capture)
+    app.router.add_get('/api/camera/last.jpg', camera_last)
+    app.router.add_post('/api/camera/discard', camera_discard)
     app.router.add_post('/api/sleep', sleep_setting)
     app.router.add_post('/api/brightness', brightness)
     app.router.add_post('/api/screen-off', screen_off)
