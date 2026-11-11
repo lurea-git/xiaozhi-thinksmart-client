@@ -657,6 +657,8 @@ class Client:
                     self.listen_after_reply = True
                 # on the page right away: asking the hub for its models first took 0.7-2 s
                 m = self.question = self.add_message('user', text)
+                if self.photo is not None:
+                    m['has_image'] = True    # 这句话在问刚拍的照片：页面上配一张缩略图
                 self.set_state('thinking')
                 asyncio.create_task(self._refresh_after_question(m))
         elif kind == 'vad':
@@ -839,6 +841,30 @@ class Client:
 
     # ---- conversation threads (one per model, like the hub keeps them) ----
 
+    async def photo_bytes(self, msg_id):
+        """The JPEG behind a message: the one just taken, or (after a restart) the hub's copy."""
+        p = self.photo
+        if p and msg_id == getattr(self.question, 'id', None):
+            return p['jpeg']
+        hub_id = None
+        for msgs in self.threads.values():
+            for m in msgs:
+                if m.get('id') == msg_id:
+                    hub_id = m.get('hub_id')
+                    break
+            if hub_id:
+                break
+        if not hub_id:
+            return None
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+                url = self.cfg['hub_http'] + '/kiosk/chat/image?' + urllib.parse.urlencode(
+                    {'device': self.cfg['device_id'], 'id': hub_id})
+                async with s.get(url) as r:
+                    return await r.read() if r.status == 200 else None
+        except Exception:
+            return None
+
     def add_message(self, role, text):
         entry = self.view_entry()
         if entry != self.entry:
@@ -867,7 +893,9 @@ class Client:
         if not data.get('ok') or self.hub.connected:
             return
         self.threads = {entry: [{'id': f"h{m['id']}", 'role': m['role'], 'text': m['text'], 'time': m['time'],
-                                 'entry': entry, **({'interrupted': True} if m.get('interrupted') else {})}
+                                 'entry': entry, 'hub_id': m['id'],
+                                 **({'interrupted': True} if m.get('interrupted') else {}),
+                                 **({'has_image': True} if m.get('has_image') else {})}
                                 for m in items]
                         for entry, items in (data.get('models') or {}).items()}
         self.history_loaded = True

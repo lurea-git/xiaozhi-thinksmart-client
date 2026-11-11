@@ -1110,7 +1110,9 @@ function fmtTime(t) {
 
 // A reply grows sentence by sentence; the text just shows as it is (no per-sentence highlight)
 function fillMsg(el, m) {
-  const html = esc(m.text) + (m.interrupted ? '<span class="cut">已打断</span>' : '') + `<span class="ts">${fmtTime(m.time)}</span>`;
+  const pic = m.has_image
+    ? `<img class="shot" src="/api/chat/photo/${encodeURIComponent(m.id)}" alt="照片" data-full="${encodeURIComponent(m.id)}">` : '';
+  const html = pic + esc(m.text) + (m.interrupted ? '<span class="cut">已打断</span>' : '') + `<span class="ts">${fmtTime(m.time)}</span>`;
   if (m.role === 'bot') el.querySelector('.body').innerHTML = html;
   else el.innerHTML = html;
 }
@@ -1367,6 +1369,22 @@ $('photoForm').addEventListener('submit', e => { e.preventDefault(); photoAsk($(
 // the system keyboard is injected by the kiosk shell and comes up with the focused field (see the Wi-Fi password).
 // On pointerdown, not click, for the same reason as there: a cancelled pointerdown sends no click on the touchscreen.
 $('photoSend').addEventListener('pointerdown', e => { e.preventDefault(); photoAsk($('photoText').value); });
+
+/* ---- a photo in the conversation, opened full screen ---- */
+function openShot(src) {
+  const box = $('shotBox');
+  $('shotImg').src = src;
+  box.classList.add('on');
+}
+function closeShot() {
+  $('shotBox').classList.remove('on');
+  $('shotImg').removeAttribute('src');   // stop the download when it was slow
+}
+$('messages').addEventListener('click', e => {
+  const img = e.target.closest && e.target.closest('.shot');
+  if (img) openShot(img.src);
+});
+$('shotBox').addEventListener('click', e => { e.preventDefault(); closeShot(); });
 
 /* ---- buttons ---- */
 function post(path, body) {

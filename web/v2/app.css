@@ -502,3 +502,15 @@ body[data-state="listening"] .mic-ring { opacity: .75; }
 
 /* the on-screen keyboard comes up from the bottom while the text box has focus: move the panel out of its way */
 .photo.typing { bottom: auto; top: 96px; }
+
+/* ---- a photo inside the conversation, and the full-screen view ---- */
+.msg .shot { display: block; width: 168px; height: auto; max-height: 126px; object-fit: cover; border-radius: 14px;
+             margin-bottom: 8px; border: 1px solid var(--line); cursor: pointer; }
+.msg .shot:active { transform: scale(.98); }
+.shot-box { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 40px;
+            background: #04060ee8; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.shot-box.on { opacity: 1; pointer-events: auto; }
+.shot-box img { max-width: 100%; max-height: 100%; border-radius: 18px; box-shadow: 0 30px 80px #000c; }
+.shot-close { position: fixed; top: 28px; right: 28px; width: 62px; height: 62px; border-radius: 20px; display: grid;
+              place-items: center; color: var(--ink); background: var(--card2); border: 1px solid var(--line); }
+.shot-close:active { transform: scale(.94); }

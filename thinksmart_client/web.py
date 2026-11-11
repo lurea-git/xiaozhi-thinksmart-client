@@ -197,6 +197,14 @@ def make_app(client: Client):
     app.router.add_post('/api/camera/capture', camera_capture)
     app.router.add_get('/api/camera/last.jpg', camera_last)
     app.router.add_post('/api/camera/discard', camera_discard)
+
+    async def chat_photo(request):
+        data = await client.photo_bytes(request.match_info['msg_id'])
+        if data is None:
+            return web.Response(status=404)
+        return web.Response(body=data, content_type='image/jpeg', headers={'Cache-Control': 'no-store'})
+
+    app.router.add_get('/api/chat/photo/{msg_id}', chat_photo)
     app.router.add_post('/api/sleep', sleep_setting)
     app.router.add_post('/api/brightness', brightness)
     app.router.add_post('/api/screen-off', screen_off)
