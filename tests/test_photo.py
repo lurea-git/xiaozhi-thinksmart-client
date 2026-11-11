@@ -134,49 +134,66 @@ async def test_speech_without_a_photo_changes_nothing():
     assert not [e for e in published(c) if e[0] == 'photo']
 
 
-def test_capture_is_refused_while_another_runs():
+def test_capture_asks_the_camera_service(monkeypatch):
+    cam = camera.Camera()
+    asked = []
+
+    def ask(service, timeout):
+        asked.append((service, timeout))
+        return b'\xff\xd8\xff' + b'p' * 50
+
+    monkeypatch.setattr(camera, '_ask_for_photo', ask)
+    assert asyncio.run(cam.capture()).startswith(b'\xff\xd8\xff')
+    assert asked == [(camera.SERVICE, camera.PHOTO_TIMEOUT)]
+
+
+def test_capture_is_refused_while_another_runs(monkeypatch):
     cam = camera.Camera()
 
     async def run():
-        async with cam._lock:
+        cam._busy = True
+        try:
             with pytest.raises(camera.CameraError, match='正在拍照'):
                 await cam.capture()
+        finally:
+            cam._busy = False
 
     asyncio.run(run())
 
 
-def test_camera_index_is_read_from_cam_list(monkeypatch):
-    cam = camera.Camera()
+def test_camera_service_down_is_a_clear_error(monkeypatch):
+    def down(url, timeout=None):
+        raise urllib.error.URLError('refused')
 
-    class FakeProc:
-        returncode = 0
-
-        async def communicate(self):
-            return (b'Available cameras:\n1: Internal front camera (/base/camera@37)\n', b'')
-
-    async def fake_exec(*args, **kw):
-        assert args[-1] == '-l'
-        return FakeProc()
-
-    monkeypatch.setattr(asyncio, 'create_subprocess_exec', fake_exec)
-    assert asyncio.run(cam._camera_index()) == '1'
+    monkeypatch.setattr(camera.urllib.request, 'urlopen', down)
+    with pytest.raises(camera.CameraError, match='拍照服务没有运行'):
+        camera._ask_for_photo(camera.SERVICE, 5)
 
 
-def test_no_camera_listed_is_a_clear_error(monkeypatch):
-    cam = camera.Camera()
+def test_camera_service_error_sentence_is_passed_through(monkeypatch):
+    import io
 
-    class FakeProc:
-        returncode = 0
+    def refuse(url, timeout=None):
+        raise urllib.error.HTTPError(url, 500, 'err', {},
+                                     io.BytesIO(json.dumps({'ok': False, 'error': '摄像头没有找到，请确认摄像头驱动已启用'}).encode()))
 
-        async def communicate(self):
-            return (b'Available cameras:\n', b'')
+    monkeypatch.setattr(camera.urllib.request, 'urlopen', refuse)
+    with pytest.raises(camera.CameraError, match='摄像头没有找到'):
+        camera._ask_for_photo(camera.SERVICE, 5)
 
-    async def fake_exec(*args, **kw):
-        return FakeProc()
 
-    monkeypatch.setattr(asyncio, 'create_subprocess_exec', fake_exec)
-    with pytest.raises(camera.CameraError, match='没有找到'):
-        asyncio.run(cam._camera_index())
+def test_camera_service_returns_the_jpeg(monkeypatch):
+    import io
+
+    class Reply(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(camera.urllib.request, 'urlopen', lambda url, timeout=None: Reply(b'\xff\xd8\xffphoto'))
+    assert camera._ask_for_photo(camera.SERVICE, 5) == b'\xff\xd8\xffphoto'
 
 
 def test_send_to_hub_maps_refusal_to_the_hub_sentence(monkeypatch):
