@@ -198,6 +198,7 @@ class Client:
         self.history_loaded = False
         self.entry = None             # the model this connection talks to
         self.models = {'current': None, 'options': []}
+        self.asked_photos = {}
         self.bot_msg = None
         self.decoder = None
         self._seq = 0
@@ -371,6 +372,8 @@ class Client:
 
     PHOTO_SECONDS = 120   # same as the hub's: after that the hub has dropped the picture
     photo = None          # the photo waiting for a question: {'jpeg', 'at', 'model'}
+    photo_asked = None    # sent with the typed question above, waiting for the hub to echo it back
+    asked_photos = None   # message id -> jpeg of the question that used a photo (for its thumbnail)
 
     async def take_photo(self):
         """Capture and hand the photo to the hub. Returns {'ok', 'error'?, 'model'?}; the page shows the picture."""
@@ -558,7 +561,9 @@ class Client:
         if not await self.ensure_connected():
             return
         if self.photo is not None:
-            # a typed question about the photo: the hub answers it with the picture (photo_box.take)
+            # a typed question about the photo: the hub answers it with the picture (photo_box.take);
+            # the photo goes with the question the hub echoes back (stt)
+            self.photo_asked = self.photo
             self.photo = None
             self.events.publish('photo', {'on': False})
         try:
@@ -628,6 +633,8 @@ class Client:
                 # not speech: the hub's note that the model calls a tool (for the screens of ESP32 boards)
                 log.info('the model calls %s', text[2:])
             elif text:
+                asked = self.photo or self.photo_asked
+                self.photo_asked = None
                 if self.photo is not None:
                     # the hub took the photo for this question (photo_box.take): it is used up now
                     self.photo = None
@@ -656,9 +663,14 @@ class Client:
                     self.uploading = False
                     self.listen_after_reply = True
                 # on the page right away: asking the hub for its models first took 0.7-2 s
-                m = self.question = self.add_message('user', text)
-                if self.photo is not None:
-                    m['has_image'] = True    # 这句话在问刚拍的照片：页面上配一张缩略图
+                m = self.question = self.add_message('user', text, has_image=asked is not None)
+                if asked is not None:
+                    # 这句话在问刚拍的照片：页面上配一张缩略图，点开看的就是这张
+                    if self.asked_photos is None:
+                        self.asked_photos = {}
+                    self.asked_photos[m['id']] = asked['jpeg']
+                    for old in list(self.asked_photos)[:-5]:
+                        del self.asked_photos[old]
                 self.set_state('thinking')
                 asyncio.create_task(self._refresh_after_question(m))
         elif kind == 'vad':
@@ -843,13 +855,13 @@ class Client:
 
     async def photo_bytes(self, msg_id):
         """The JPEG behind a message: the one just taken, or (after a restart) the hub's copy."""
-        p = self.photo
-        if p and msg_id == getattr(self.question, 'id', None):
-            return p['jpeg']
+        for mid, jpeg in (self.asked_photos or {}).items():
+            if str(mid) == str(msg_id):
+                return jpeg
         hub_id = None
         for msgs in self.threads.values():
             for m in msgs:
-                if m.get('id') == msg_id:
+                if str(m.get('id')) == str(msg_id):
                     hub_id = m.get('hub_id')
                     break
             if hub_id:
@@ -865,13 +877,15 @@ class Client:
         except Exception:
             return None
 
-    def add_message(self, role, text):
+    def add_message(self, role, text, has_image=False):
         entry = self.view_entry()
         if entry != self.entry:
             self.entry = entry
             self.events.publish('thread', {'entry': entry, 'messages': self.threads.get(entry, [])})
         self._seq += 1
         m = {'id': self._seq, 'role': role, 'text': text, 'time': time.time(), 'entry': entry}
+        if has_image:
+            m['has_image'] = True
         self.threads.setdefault(entry, []).append(m)
         del self.threads[entry][:-200]
         self.publish_message(m)
