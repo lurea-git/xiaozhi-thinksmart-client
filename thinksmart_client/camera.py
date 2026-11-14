@@ -5,8 +5,11 @@ The capture itself runs outside this process: the client's unit is sandboxed awa
 see the sensor here. thinksmart-camera.service holds the camera device classes and hands back one
 JPEG per GET /photo. This module just asks it and talks to the hub.
 """
+import array
+import fcntl
 import json
 import logging
+import os
 import urllib.error
 import urllib.request
 
@@ -14,6 +17,10 @@ log = logging.getLogger(__name__)
 
 SERVICE = 'http://127.0.0.1:8091'
 PHOTO_TIMEOUT = 40   # ~20 frames to settle the exposure, then ffmpeg
+# gpio-keys also carries the lens cover slider (gpio87 "Camera Lens Cover", active-low) as
+# SW_CAMERA_LENS_COVER: 1 = covered. Same input device and ioctl as the mic switch (device.Keys).
+SW_LENS_COVER = 9
+LENS_COVERED = '镜头盖关着，推开镜头盖再拍'
 
 
 class CameraError(Exception):
@@ -34,6 +41,28 @@ def _ask_for_photo(service, timeout):
         raise CameraError('拍照服务没有运行')
 
 
+def lens_covered(device='gpio-keys'):
+    """True when the lens cover is closed. False when it is open or cannot be read: a photo is
+    never refused on a guess (the sandbox binds /dev/input read-only, so this normally works)."""
+    from .device import EVIOCGSW, input_device
+
+    path = input_device(device)
+    if not path:
+        return False
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        bits = array.array('B', [0] * 8)
+        fcntl.ioctl(fd, EVIOCGSW, bits)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return bool(int.from_bytes(bytes(bits), 'little') >> SW_LENS_COVER & 1)
+
+
 class Camera:
     """One capture at a time (the sensor has a single user); the daemon enforces this too."""
 
@@ -51,6 +80,8 @@ class Camera:
 
         if self._busy:
             raise CameraError('正在拍照，请稍等')
+        if lens_covered():
+            raise CameraError(LENS_COVERED)   # the sensor would only see black
         self._busy = True
         try:
             data = await asyncio.get_running_loop().run_in_executor(

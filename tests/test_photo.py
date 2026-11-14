@@ -147,6 +147,46 @@ def test_capture_asks_the_camera_service(monkeypatch):
     assert asked == [(camera.SERVICE, camera.PHOTO_TIMEOUT)]
 
 
+def fake_switches(monkeypatch, bits=None, error=None, path='/dev/input/event0'):
+    """gpio-keys answering EVIOCGSW with `bits` (or failing with `error`)."""
+    from thinksmart_client import device
+
+    monkeypatch.setattr(device, 'input_device', lambda name: path if name == 'gpio-keys' else None)
+    monkeypatch.setattr(camera.os, 'open', lambda p, flags: 7)
+    monkeypatch.setattr(camera.os, 'close', lambda fd: None)
+
+    def ioctl(fd, request, buf):
+        assert request == device.EVIOCGSW
+        if error:
+            raise error
+        buf[:] = type(buf)('B', bits.to_bytes(8, 'little'))
+
+    monkeypatch.setattr(camera.fcntl, 'ioctl', ioctl)
+
+
+def test_lens_cover_is_switch_9_of_gpio_keys(monkeypatch):
+    fake_switches(monkeypatch, bits=1 << 9 | 1 << 4)        # covered, mic on
+    assert camera.lens_covered() is True
+    fake_switches(monkeypatch, bits=1 << 4)                 # open, mic on (the device today)
+    assert camera.lens_covered() is False
+
+
+def test_lens_cover_unknown_never_blocks_a_photo(monkeypatch):
+    fake_switches(monkeypatch, error=OSError('ENOTTY'))
+    assert camera.lens_covered() is False
+    fake_switches(monkeypatch, bits=1 << 9, path=None)      # no gpio-keys device at all
+    assert camera.lens_covered() is False
+
+
+def test_capture_is_refused_with_the_cover_closed(monkeypatch):
+    cam = camera.Camera()
+    monkeypatch.setattr(camera, 'lens_covered', lambda: True)
+    monkeypatch.setattr(camera, '_ask_for_photo', lambda *a: pytest.fail('camera asked with the cover closed'))
+    with pytest.raises(camera.CameraError, match='镜头盖'):
+        asyncio.run(cam.capture())
+    assert not cam.busy
+
+
 def test_capture_is_refused_while_another_runs(monkeypatch):
     cam = camera.Camera()
 
